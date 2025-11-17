@@ -591,10 +591,12 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
 }
 
 #[tokio::main]
-async fn main() {}
+async fn main() {
+    run().await.expect("failed")
+}
 
 async fn run() -> anyhow::Result<()> {
-    let config_file = fs::read_to_string("proxy.toml").expect("Requires proxy.toml");
+    let config_file = fs::read_to_string("proxy.toml")?;
     let config = toml::from_str(&config_file)?;
     let Config {
         routes,
@@ -611,8 +613,7 @@ async fn run() -> anyhow::Result<()> {
         .timeout(gateway_timeout)
         .tcp_keepalive(Duration::from_secs(60))
         .http2_adaptive_window(true)
-        .build()
-        .expect("Failed to start reqwest");
+        .build()?;
 
     let proxy = Proxy {
         client,
