@@ -1,7 +1,12 @@
 [package]
-name = "relay"
+name = "exchange"
 version = "0.1.0"
 edition = "2024"
+description = "A minimal, configuration-driven HTTP reverse proxy built with hyper and tokio."
+license = "MIT"
+repository = "https://github.com/shadertheory/exchange"
+keywords = ["proxy", "reverse-proxy", "http", "hyper", "tokio"]
+categories = ["network-programming", "web-programming", "asynchronous"]
 
 [dependencies]
 anyhow = "1.0.100"
