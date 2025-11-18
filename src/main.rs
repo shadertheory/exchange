@@ -681,7 +681,7 @@ async fn run() -> anyhow::Result<()> {
             // Use HTTP/1 connection builder
             let service = service_fn(async |mut req| -> Result<_, anyhow::Error> {
                 use hyper::header::*;
-                *req.headers_mut().get_mut(HeaderName::from_str("X-Real-IP").unwrap()).unwrap() = HeaderValue::from_str(peer_addr.as_str()).unwrap();
+                req.headers_mut().append("X-Real-IP".into(), HeaderValue::new(peer_addr.as_str().to_string()));
                 Ok(handle_request(req, state.clone()).await)
             });
 
