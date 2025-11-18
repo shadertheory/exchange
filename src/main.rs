@@ -534,9 +534,7 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
     let request_origin = req
         .headers()
         .get("Origin")
-        .map(|x| x.to_str().unwrap())
-        .unwrap_or(&state.read().await.host)
-        .to_string();
+        .map(|x| x.to_str().unwrap().to_string());
 
     let state_guard = state.read().await;
 
@@ -642,11 +640,13 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
             println!("    Returning from origin server `{target}` to `{client_addr:?}`");
 
             for Origin { host: origin } in &state.read().await.origins {
-                let origin_str = request_origin.as_str();
+                let Some(origin_str) = request_origin.as_ref() else {
+                    break;
+                };
                 let allowed_origins = &state.read().await.origins;
 
                 // Check if the request origin is in our allowed list
-                if allowed_origins.iter().any(|o| o.host == origin_str) {
+                if allowed_origins.iter().any(|o| &o.host == origin_str) {
                     println!("        Adding CORS header for origin `{origin_str}`");
                     response = response.header("Access-Control-Allow-Origin", origin_str);
                     response = response.header(
