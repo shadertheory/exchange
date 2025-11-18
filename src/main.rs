@@ -1,10 +1,7 @@
 use derive_more::{Deref, Display};
 use http_body_util::{BodyExt, Collected, Full, Limited};
 use hyper::{
-    Request, Response, StatusCode, Uri,
-    body::{Body, Bytes, Incoming},
-    server::conn::http1,
-    service::service_fn,
+    Request, Response, StatusCode, Uri, body::{Body, Bytes, Incoming}, header::HeaderName, server::conn::http1, service::service_fn
 };
 use hyper_util::rt::TokioIo;
 use reqwest::Client;
@@ -28,6 +25,7 @@ macro_rules! err {
 #[derive(Debug, Deserialize, Clone)]
 struct Config {
     routes: Vec<Route>,
+    host: String,
     port: u16,
     #[serde(default = "Config::default_max_body")]
     max_body_bytes: u64,
@@ -497,6 +495,7 @@ struct Route {
 }
 
 struct Proxy {
+    host: String,
     max_body_bytes: u64,
     gateway_expectation: Duration,
     gateway_timeout: Duration,
@@ -506,23 +505,27 @@ struct Proxy {
 
 pub type Global = Arc<RwLock<Proxy>>;
 
+
 async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<Bytes>> {
     let path = req.uri().path();
     let query = req.uri().query();
     let method = req.method().clone();
     let headers = req.headers().clone();
 
-    let state = state.write().await;
+    let client_addr = req.headers().get("X-Real-IP");
 
-    let target = state.routes.iter().find_map(|route| {
+    let state_guard = state.read().await;
+
+    let target = state_guard.routes.iter().find_map(|route| {
+        let route_pattern = route.pattern.path();
         if route.wildcard {
-            path.starts_with(&route.pattern.to_string())
-                .then(|| &route.target)
+            // For wildcard routes, just check if it starts with the pattern
+            path.starts_with(route_pattern).then(|| &route.target)
         } else {
-            (path == route.pattern).then(|| &route.target)
+            // For exact routes, check equality
+            (path == route_pattern).then(|| &route.target)
         }
     });
-    let path = path.trim_start_matches("/");
 
     let target = match target {
         Some(t) => t,
@@ -531,13 +534,18 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
         }
     };
 
-    let target_uri = match query {
-        Some(q) => format!("{}{}?{}", target, path, q),
-        None => format!("{}{}", target, path),
+    // Build the full target URI, avoiding double slashes
+    let target_str = target.to_string();
+    let target_base = target_str.trim_end_matches('/');
+    
+    let target_uri = if let Some(q) = query {
+        format!("{}{}?{}", target_base, path, q)
+    } else {
+        format!("{}{}", target_base, path)
     };
 
     use http_body_util::BodyExt;
-    let Ok(body_bytes) = Limited::new(req.into_body(), state.max_body_bytes as usize)
+    let Ok(body_bytes) = Limited::new(req.into_body(), state_guard.max_body_bytes as usize)
         .collect()
         .await
         .map(Collected::to_bytes)
@@ -545,10 +553,36 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
         return err!(PAYLOAD_TOO_LARGE, "bro its a megabyte");
     };
 
-    let mut reqwest = state.client.request(method, &target_uri);
+    let mut reqwest = state_guard.client.request(method, &target_uri);
 
+    // Get the original host header or use proxy host
+    let original_host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or(&state_guard.host);
+
+    // Determine the protocol (http or https) from original request
+    let protocol = if headers
+        .get("x-forwarded-proto")
+        .and_then(|h| h.to_str().ok())
+        .map(|p| p == "https")
+        .unwrap_or(false)
+    {
+        "https"
+    } else {
+        "http"
+    };
+
+    // Add proxy-related headers
+    reqwest = reqwest.header("X-Forwarded-For", client_addr.clone());
+    reqwest = reqwest.header("X-Forwarded-Proto", protocol);
+    reqwest = reqwest.header("X-Forwarded-Host", original_host);
+    reqwest = reqwest.header("X-Real-IP", client_addr);
+
+    // Forward other headers (excluding host and content-length which reqwest handles)
     for (key, value) in headers.iter() {
-        if key != "host" && key != "content-length" {
+        let key_str = key.as_str();
+        if key_str != "host" && key_str != "content-length" {
             reqwest = reqwest.header(key, value);
         }
     }
@@ -556,6 +590,8 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
     if !body_bytes.is_empty() {
         reqwest = reqwest.body(body_bytes);
     }
+
+    drop(state_guard);
 
     match reqwest.send().await {
         Ok(response) => {
@@ -590,7 +626,6 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
         }
     }
 }
-
 #[tokio::main]
 async fn main() {
     run().await.expect("failed")
@@ -606,6 +641,7 @@ async fn run() -> anyhow::Result<()> {
         connection_pool_size,
         gateway_expectation,
         gateway_timeout,
+        host,
     } = config;
 
     let client = Client::builder()
@@ -617,6 +653,7 @@ async fn run() -> anyhow::Result<()> {
         .build()?;
 
     let proxy = Proxy {
+        host,
         client,
         routes,
         max_body_bytes,
@@ -633,7 +670,8 @@ async fn run() -> anyhow::Result<()> {
 
     // Accept connections in a loop
     loop {
-        let (stream, _) = listener.accept().await?;
+        let ( stream, _) = listener.accept().await?;
+        let peer_addr = stream.peer_addr().unwrap().to_string();
         let io = TokioIo::new(stream);
         let state = state.clone();
 
@@ -641,7 +679,9 @@ async fn run() -> anyhow::Result<()> {
         tokio::spawn(async move {
             let state = state.clone();
             // Use HTTP/1 connection builder
-            let service = service_fn(async |req| -> Result<_, anyhow::Error> {
+            let service = service_fn(async |mut req| -> Result<_, anyhow::Error> {
+                use hyper::header::*;
+                *req.headers_mut().get_mut(HeaderName::from_str("X-Real-IP").unwrap()).unwrap() = HeaderValue::from_str(peer_addr.as_str()).unwrap();
                 Ok(handle_request(req, state.clone()).await)
             });
 
