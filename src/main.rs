@@ -522,6 +522,7 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
             (path == route.pattern).then(|| &route.target)
         }
     });
+    let path = path.trim_start_matches("/");
 
     let target = match target {
         Some(t) => t,
