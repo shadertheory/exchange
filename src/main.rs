@@ -534,9 +534,8 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
     let request_origin = req
         .headers()
         .get("Origin")
-        .unwrap()
-        .to_str()
-        .unwrap()
+        .map(|x| x.to_str().unwrap())
+        .unwrap_or(&state.read().await.host)
         .to_string();
 
     let state_guard = state.read().await;
