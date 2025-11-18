@@ -533,16 +533,20 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
 
     let state_guard = state.read().await;
 
-    let target = state_guard.routes.iter().find_map(|route| {
-        let route_pattern = route.pattern.path();
-        if route.wildcard {
-            // For wildcard routes, just check if it starts with the pattern
-            path.starts_with(route_pattern).then(|| &route.target)
-        } else {
-            // For exact routes, check equality
-            (path == route_pattern).then(|| &route.target)
-        }
-    }).map(Clone::clone);
+    let target = state_guard
+        .routes
+        .iter()
+        .find_map(|route| {
+            let route_pattern = route.pattern.path();
+            if route.wildcard {
+                // For wildcard routes, just check if it starts with the pattern
+                path.starts_with(route_pattern).then(|| &route.target)
+            } else {
+                // For exact routes, check equality
+                (path == route_pattern).then(|| &route.target)
+            }
+        })
+        .map(Clone::clone);
 
     let target = match target {
         Some(t) => t,
@@ -590,7 +594,6 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
         "http"
     };
 
-
     println!("    Protocol `{original_host}``");
     println!("    Protocol `{protocol}``");
 
@@ -631,23 +634,34 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
 
             println!("    Returning from origin server `{target}` to `{client_addr:?}`");
 
+            for Origin { host: origin } in &state.read().await.origins {
+                if let Some(request_origin) = headers.get("origin") {
+                    if let Ok(origin_str) = request_origin.to_str() {
+                        let allowed_origins = &state.read().await.origins;
+
+                        // Check if the request origin is in our allowed list
+                        if allowed_origins.iter().any(|o| o.host == origin_str) {
+                            println!("        Adding CORS header for origin `{origin_str}`");
+                            response = response.header("Access-Control-Allow-Origin", origin_str);
+                            response = response.header(
+                                "Access-Control-Allow-Methods",
+                                "GET, POST, PUT, DELETE, OPTIONS",
+                            );
+                            response = response.header(
+                                "Access-Control-Allow-Headers",
+                                "Content-Type, Authorization, X-API-Version",
+                            );
+                            response = response.header("Access-Control-Allow-Credentials", "true");
+                            response = response.header("Vary", "Origin");
+                        }
+                    }
+                }
+            }
+
             for (key, value) in headers {
                 let Some(key) = key else { continue };
                 println!("        Adding header `{key:?}` to define `{value:?}`");
                 response = response.header(key, value);
-            }
-            for Origin { host: origin } in &state.read().await.origins {
-                println!("        Adding CORS header for origin `{origin}`");
-                response = response.header("Access-Control-Allow-Origin", origin);
-                response = response.header(
-                    "Access-Control-Allow-Methods",
-                    "GET, POST, PUT, DELETE, OPTIONS",
-                );
-                response = response.header(
-                    "Access-Control-Allow-Headers",
-                    "Content-Type, Authorization, X-API-Version",
-                );
-                response = response.header("Access-Control-Allow-Credentials", "true");
             }
 
             let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
