@@ -541,7 +541,7 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
             // For exact routes, check equality
             (path == route_pattern).then(|| &route.target)
         }
-    });
+    }).map(Clone::clone);
 
     let target = match target {
         Some(t) => t,
@@ -593,7 +593,7 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
     reqwest = reqwest.header("X-Forwarded-For", client_addr.clone());
     reqwest = reqwest.header("X-Forwarded-Proto", protocol);
     reqwest = reqwest.header("X-Forwarded-Host", original_host);
-    reqwest = reqwest.header("X-Real-IP", client_addr);
+    reqwest = reqwest.header("X-Real-IP", client_addr.clone());
 
     // Forward other headers (excluding host and content-length which reqwest handles)
     for (key, value) in headers.iter() {
@@ -624,11 +624,15 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
 
             let mut response = Response::builder().status(status);
 
+            println!("    Returning from origin server `{target}` to `{client_addr:?}`");
+
             for (key, value) in headers {
                 let Some(key) = key else { continue };
+                println!("        Adding header `{key:?}` to define `{value:?}`");
                 response = response.header(key, value);
             }
             for Origin { host: origin } in &state.read().await.origins {
+                println!("        Adding CORS header for origin `{origin}`");
                 response = response.header("Access-Control-Allow-Origin", origin);
                 response = response.header(
                     "Access-Control-Allow-Methods",
@@ -641,7 +645,9 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
                 response = response.header("Access-Control-Allow-Credentials", "true");
             }
 
+            let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
             let response = response.body(Full::new(Bytes::from(body_bytes))).unwrap();
+            println!("    Body complete `{body_str}`");
 
             response
         }
