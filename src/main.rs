@@ -512,7 +512,7 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
     let method = req.method().clone();
     let headers = req.headers().clone();
 
-    let client_addr = req.headers().get("X-Real-IP");
+    let client_addr = req.headers().get("X-Real-IP").unwrap().to_str().unwrap().to_string();
 
     let state_guard = state.read().await;
 
