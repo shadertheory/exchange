@@ -664,9 +664,9 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
                 response = response.header(key, value);
             }
 
-            let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+            let body_len = body_bytes.len();
             let response = response.body(Full::new(Bytes::from(body_bytes))).unwrap();
-            println!("    Body complete `{body_str}`");
+            println!("    Body complete `{body_len}`");
 
             println!("Response complete\n");
             response
