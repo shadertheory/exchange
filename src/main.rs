@@ -531,7 +531,13 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
         .unwrap()
         .to_string();
 
-    let request_origin = req.headers().get("Origin").unwrap().to_str().unwrap().to_string();
+    let request_origin = req
+        .headers()
+        .get("Origin")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let state_guard = state.read().await;
 
@@ -637,24 +643,23 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
             println!("    Returning from origin server `{target}` to `{client_addr:?}`");
 
             for Origin { host: origin } in &state.read().await.origins {
-                    if let Ok(origin_str) = request_origin.to_str() {
-                        let allowed_origins = &state.read().await.origins;
+                let origin_str = request_origin.as_str();
+                let allowed_origins = &state.read().await.origins;
 
-                        // Check if the request origin is in our allowed list
-                        if allowed_origins.iter().any(|o| o.host == origin_str) {
-                            println!("        Adding CORS header for origin `{origin_str}`");
-                            response = response.header("Access-Control-Allow-Origin", origin_str);
-                            response = response.header(
-                                "Access-Control-Allow-Methods",
-                                "GET, POST, PUT, DELETE, OPTIONS",
-                            );
-                            response = response.header(
-                                "Access-Control-Allow-Headers",
-                                "Content-Type, Authorization, X-API-Version",
-                            );
-                            response = response.header("Access-Control-Allow-Credentials", "true");
-                            response = response.header("Vary", "Origin");
-                        }
+                // Check if the request origin is in our allowed list
+                if allowed_origins.iter().any(|o| o.host == origin_str) {
+                    println!("        Adding CORS header for origin `{origin_str}`");
+                    response = response.header("Access-Control-Allow-Origin", origin_str);
+                    response = response.header(
+                        "Access-Control-Allow-Methods",
+                        "GET, POST, PUT, DELETE, OPTIONS",
+                    );
+                    response = response.header(
+                        "Access-Control-Allow-Headers",
+                        "Content-Type, Authorization, X-API-Version",
+                    );
+                    response = response.header("Access-Control-Allow-Credentials", "true");
+                    response = response.header("Vary", "Origin");
                 }
             }
 
