@@ -637,7 +637,6 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
             println!("    Returning from origin server `{target}` to `{client_addr:?}`");
 
             for Origin { host: origin } in &state.read().await.origins {
-                if let Some(request_origin) = request_origin {
                     if let Ok(origin_str) = request_origin.to_str() {
                         let allowed_origins = &state.read().await.origins;
 
@@ -656,7 +655,6 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
                             response = response.header("Access-Control-Allow-Credentials", "true");
                             response = response.header("Vary", "Origin");
                         }
-                    }
                 }
             }
 
