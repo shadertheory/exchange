@@ -1,7 +1,11 @@
 use derive_more::{Deref, Display};
 use http_body_util::{BodyExt, Collected, Full, Limited};
 use hyper::{
-    Request, Response, StatusCode, Uri, body::{Body, Bytes, Incoming}, header::HeaderName, server::conn::http1, service::service_fn
+    Request, Response, StatusCode, Uri,
+    body::{Body, Bytes, Incoming},
+    header::HeaderName,
+    server::conn::http1,
+    service::service_fn,
 };
 use hyper_util::rt::TokioIo;
 use reqwest::Client;
@@ -23,8 +27,14 @@ macro_rules! err {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct Origin {
+    pub host: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct Config {
     routes: Vec<Route>,
+    origins: Vec<Origin>,
     host: String,
     port: u16,
     #[serde(default = "Config::default_max_body")]
@@ -495,6 +505,7 @@ struct Route {
 }
 
 struct Proxy {
+    origins: Vec<Origin>,
     host: String,
     max_body_bytes: u64,
     gateway_expectation: Duration,
@@ -505,14 +516,19 @@ struct Proxy {
 
 pub type Global = Arc<RwLock<Proxy>>;
 
-
 async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<Bytes>> {
     let path = req.uri().path();
     let query = req.uri().query();
     let method = req.method().clone();
     let headers = req.headers().clone();
 
-    let client_addr = req.headers().get("X-Real-IP").unwrap().to_str().unwrap().to_string();
+    let client_addr = req
+        .headers()
+        .get("X-Real-IP")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let state_guard = state.read().await;
 
@@ -537,7 +553,7 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
     // Build the full target URI, avoiding double slashes
     let target_str = target.to_string();
     let target_base = target_str.trim_end_matches('/');
-    
+
     let target_uri = if let Some(q) = query {
         format!("{}{}?{}", target_base, path, q)
     } else {
@@ -612,6 +628,18 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
                 let Some(key) = key else { continue };
                 response = response.header(key, value);
             }
+            for Origin { host: origin } in &state.read().await.origins {
+                response = response.header("Access-Control-Allow-Origin", origin);
+                response = response.header(
+                    "Access-Control-Allow-Methods",
+                    "GET, POST, PUT, DELETE, OPTIONS",
+                );
+                response = response.header(
+                    "Access-Control-Allow-Headers",
+                    "Content-Type, Authorization, X-API-Version",
+                );
+                response = response.header("Access-Control-Allow-Credentials", "true");
+            }
 
             let response = response.body(Full::new(Bytes::from(body_bytes))).unwrap();
 
@@ -642,6 +670,7 @@ async fn run() -> anyhow::Result<()> {
         gateway_expectation,
         gateway_timeout,
         host,
+        origins,
     } = config;
 
     let client = Client::builder()
@@ -659,6 +688,7 @@ async fn run() -> anyhow::Result<()> {
         max_body_bytes,
         gateway_expectation,
         gateway_timeout,
+        origins,
     };
 
     let state = Arc::new(RwLock::new(proxy));
@@ -670,7 +700,7 @@ async fn run() -> anyhow::Result<()> {
 
     // Accept connections in a loop
     loop {
-        let ( stream, _) = listener.accept().await?;
+        let (stream, _) = listener.accept().await?;
         let peer_addr = stream.peer_addr().unwrap().to_string();
         let io = TokioIo::new(stream);
         let state = state.clone();
@@ -681,7 +711,10 @@ async fn run() -> anyhow::Result<()> {
             // Use HTTP/1 connection builder
             let service = service_fn(async |mut req| -> Result<_, anyhow::Error> {
                 use hyper::header::*;
-                req.headers_mut().append(HeaderName::from_str("X-Real-IP").unwrap(), HeaderValue::from_str(peer_addr.as_str()).unwrap());
+                req.headers_mut().append(
+                    HeaderName::from_str("X-Real-IP").unwrap(),
+                    HeaderValue::from_str(peer_addr.as_str()).unwrap(),
+                );
                 Ok(handle_request(req, state.clone()).await)
             });
 
