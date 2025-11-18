@@ -517,6 +517,7 @@ struct Proxy {
 pub type Global = Arc<RwLock<Proxy>>;
 
 async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<Bytes>> {
+    println!("Received request");
     let path = req.uri().path();
     let query = req.uri().query();
     let method = req.method().clone();
@@ -589,6 +590,10 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
         "http"
     };
 
+
+    println!("    Protocol `{original_host}``");
+    println!("    Protocol `{protocol}``");
+
     // Add proxy-related headers
     reqwest = reqwest.header("X-Forwarded-For", client_addr.clone());
     reqwest = reqwest.header("X-Forwarded-Proto", protocol);
@@ -649,6 +654,7 @@ async fn handle_request(req: Request<Incoming>, state: Global) -> Response<Full<
             let response = response.body(Full::new(Bytes::from(body_bytes))).unwrap();
             println!("    Body complete `{body_str}`");
 
+            println!("Response complete\n");
             response
         }
         Err(e) => {
